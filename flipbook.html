@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JLC Activity Report</title>
+<!--
+  JLC Flipbook — self-hosted PDF page-flip viewer. No ads, no accounts.
+  Open-source libraries only: PDF.js (Mozilla) + StPageFlip.
+
+  HOW TO USE
+  1. Upload your PDF to the SAME site as this file (or any host that allows CORS).
+  2. Set PDF_URL below — or pass it in the link: flipbook.html?pdf=/files/brochure.pdf
+  3. Embed on the website with:
+     <iframe src="https://YOUR-HOST/flipbook.html?pdf=brochure.pdf"
+             style="width:100%;height:85vh;border:0" allowfullscreen loading="lazy"></iframe>
+-->
+<style>
+  :root{
+    --bg:#f6f3ee; --ink:#1d1b18; --muted:#7a746b; --line:#e3ddd3;
+    --btn:#ffffff; --btn-hover:#efe9df; --accent:#1d1b18;
+    --shadow:0 18px 40px -18px rgba(40,30,15,.35);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font:14px/1.4 "Helvetica Neue",Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  #app{position:relative;height:100%;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+  #stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:24px 16px 8px;position:relative}
+  #bookWrap{width:100%;height:100%;display:flex;align-items:center;justify-content:center;transition:transform .35s ease}
+  #book{margin:0 auto;transition:transform .6s cubic-bezier(.2,.7,.2,1)}
+  .page{background:#fff;overflow:hidden}
+  .page img{width:100%;height:100%;display:block;object-fit:contain;user-select:none;-webkit-user-drag:none}
+  .page .ph{width:100%;height:100%;display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(90deg,#faf8f4 0%,#f1ece4 50%,#faf8f4 100%);background-size:200% 100%;
+    animation:sh 1.4s linear infinite;color:var(--muted);font-size:12px;letter-spacing:.08em}
+  @keyframes sh{to{background-position:-200% 0}}
+  .stf__parent{filter:drop-shadow(0 20px 28px rgba(40,30,15,.22))}
+
+  /* side arrows */
+  .nav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:44px;border-radius:50%;
+    border:1px solid var(--line);background:rgba(255,255,255,.85);backdrop-filter:blur(6px);cursor:pointer;
+    display:flex;align-items:center;justify-content:center;z-index:5;transition:background .2s,opacity .2s}
+  .nav:hover{background:#fff}
+  .nav:disabled{opacity:.25;cursor:default}
+  #prev{left:12px} #next{right:12px}
+  .nav svg{width:18px;height:18px;stroke:var(--ink);fill:none;stroke-width:2}
+
+  /* toolbar */
+  #bar{display:flex;align-items:center;justify-content:center;gap:6px;padding:10px 16px 16px;flex-wrap:wrap}
+  .tb{height:36px;min-width:36px;padding:0 10px;border:1px solid var(--line);border-radius:18px;background:var(--btn);
+    color:var(--ink);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+    font:inherit;text-decoration:none;transition:background .2s}
+  .tb:hover{background:var(--btn-hover)}
+  .tb svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8}
+  #count{min-width:84px;text-align:center;color:var(--muted);font-variant-numeric:tabular-nums}
+  #count b{color:var(--ink);font-weight:600}
+  input[type=range]{width:min(260px,40vw);accent-color:var(--accent)}
+
+  /* loader */
+  #loader{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+    background:var(--bg);z-index:10;transition:opacity .4s}
+  #loader.hide{opacity:0;pointer-events:none}
+  #prog{width:180px;height:2px;background:var(--line);overflow:hidden;border-radius:2px}
+  #prog i{display:block;height:100%;width:0;background:var(--ink);transition:width .2s}
+  #msg{color:var(--muted);font-size:12px;letter-spacing:.1em;text-transform:uppercase}
+  #err{max-width:420px;text-align:center;color:#8a2a1f;display:none;padding:0 16px}
+
+  #app:fullscreen{background:var(--bg)}
+  @media (max-width:640px){
+    .nav{display:none}
+    #stage{padding:12px 8px 4px}
+    .hide-sm{display:none}
+  }
+  @media (prefers-reduced-motion:reduce){#bookWrap{transition:none}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <button class="nav" id="prev" aria-label="Página anterior"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+    <div id="bookWrap"><div id="book"></div></div>
+    <button class="nav" id="next" aria-label="Página siguiente"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>
+  </div>
+
+  <div id="bar">
+    <button class="tb" id="first" title="Portada" aria-label="Portada"><svg viewBox="0 0 24 24"><path d="M18 5l-7 7 7 7M7 5v14"/></svg></button>
+    <span id="count"><b>1</b> / –</span>
+    <input type="range" id="slider" min="0" max="0" value="0" aria-label="Ir a página" class="hide-sm">
+    <button class="tb" id="last" title="Última página" aria-label="Última página"><svg viewBox="0 0 24 24"><path d="M6 5l7 7-7 7M17 5v14"/></svg></button>
+    <button class="tb" id="zoom" title="Zoom" aria-label="Zoom"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5M8.5 11h5M11 8.5v5"/></svg></button>
+    <button class="tb" id="fs" title="Pantalla completa" aria-label="Pantalla completa"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+    <a class="tb" id="dl" title="Descargar PDF" aria-label="Descargar PDF" download><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></a>
+  </div>
+
+  <div id="loader">
+    <div id="msg">Cargando</div>
+    <div id="prog"><i></i></div>
+    <div id="err"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/page-flip@2.0.7/dist/js/page-flip.browser.js"></script>
+<script>
+(function(){
+  /* ====== SETTINGS ====== */
+  var PDF_URL = "jlc-activity-report.pdf";         // default PDF (overridden by ?pdf=...)
+  var FLIP_SOUND = true;               // soft paper sound on page turn
+  /* ====================== */
+
+  var q = new URLSearchParams(location.search);
+  var url = q.get("pdf") || PDF_URL;
+  var $ = function(id){return document.getElementById(id)};
+  var bar = $("prog").firstElementChild;
+  $("dl").href = url;
+
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+  function fail(e){
+    console.error(e);
+    $("msg").textContent = "No se pudo cargar";
+    $("prog").style.display = "none";
+    var el = $("err"); el.style.display = "block";
+    el.textContent = "Couldn't load the PDF. Check that the file exists and is hosted on the same site (or on a host that allows cross-origin access).";
+  }
+
+  // Soft page-turn sound generated in the browser (no audio file needed)
+  var actx;
+  function flipSound(){
+    if(!FLIP_SOUND) return;
+    try{
+      actx = actx || new (window.AudioContext||window.webkitAudioContext)();
+      var len = actx.sampleRate*0.28, buf = actx.createBuffer(1,len,actx.sampleRate), d = buf.getChannelData(0);
+      for(var i=0;i<len;i++){var t=i/len; d[i]=(Math.random()*2-1)*Math.pow(1-t,2.2)*Math.sin(Math.PI*Math.min(1,t*6));}
+      var src = actx.createBufferSource(); src.buffer = buf;
+      var f = actx.createBiquadFilter(); f.type="bandpass"; f.frequency.value=2200; f.Q.value=.6;
+      var g = actx.createGain(); g.gain.value=.18;
+      src.connect(f); f.connect(g); g.connect(actx.destination); src.start();
+    }catch(e){}
+  }
+
+  pdfjsLib.getDocument({url:url}).promise.then(function(pdf){
+    var n = pdf.numPages;
+    return pdf.getPage(1).then(function(p1){
+      var vp = p1.getViewport({scale:1});
+      build(pdf, n, vp.width, vp.height);
+    });
+  }).catch(fail);
+
+  function build(pdf, n, pw, ph){
+    var book = $("book"), pages = [];
+    for(var i=1;i<=n;i++){
+      var d = document.createElement("div");
+      d.className = "page";
+      if(i===1 || i===n) d.setAttribute("data-density","hard");
+      d.innerHTML = '<div class="ph">'+i+'</div>';
+      book.appendChild(d); pages.push(d);
+    }
+
+    // Render resolution: sharp on retina, capped for memory
+    var targetW = Math.min(1400, Math.round(Math.max(700, window.innerWidth/2) * Math.min(2, window.devicePixelRatio||1)));
+    var done = 0;
+    function render(i){
+      if(pages[i-1].dataset.r) return Promise.resolve();
+      pages[i-1].dataset.r = 1;
+      return pdf.getPage(i).then(function(p){
+        var vp = p.getViewport({scale: targetW / p.getViewport({scale:1}).width});
+        var c = document.createElement("canvas");
+        c.width = vp.width; c.height = vp.height;
+        return p.render({canvasContext:c.getContext("2d"), viewport:vp}).promise.then(function(){
+          return new Promise(function(res){ c.toBlob(function(b){
+            var img = new Image(); img.alt = "Página "+i; img.src = URL.createObjectURL(b);
+            img.onload = function(){ pages[i-1].innerHTML=""; pages[i-1].appendChild(img); res(); };
+          }, "image/jpeg", .9); });
+        });
+      }).then(function(){ done++; bar.style.width = Math.round(done/n*100)+"%"; });
+    }
+
+    // Render first pages before showing, rest in background
+    var firstBatch = [];
+    for(var k=1;k<=Math.min(3,n);k++) firstBatch.push(k);
+    firstBatch.reduce(function(p,i){return p.then(function(){return render(i)})}, Promise.resolve())
+      .then(start).catch(fail);
+
+    function renderRest(){
+      var i = 1;
+      (function next(){
+        while(i<=n && pages[i-1].dataset.r) i++;
+        if(i>n) return;
+        render(i).then(function(){ setTimeout(next, 0); });
+      })();
+    }
+
+    var flip;
+    function start(){
+      var stage = $("stage");
+      flip = new St.PageFlip(book, {
+        width: Math.round(pw), height: Math.round(ph),
+        size: "stretch",
+        minWidth: 200, maxWidth: 1400, minHeight: 280, maxHeight: 2000,
+        maxShadowOpacity: 0.45,
+        showCover: true,
+        mobileScrollSupport: false,
+        usePortrait: true,
+        flippingTime: 800,
+        drawShadow: true,
+        autoSize: true
+      });
+      flip.loadFromHTML(pages);
+      fit();
+      window.addEventListener("resize", fit);
+      document.addEventListener("fullscreenchange", function(){ setTimeout(fit, 60); });
+
+      var slider = $("slider"); slider.max = n-1;
+      function ui(){
+        var idx = flip.getCurrentPageIndex(), label;
+        var portrait = flip.getOrientation()==="portrait";
+        if(portrait || idx===0 || idx===n-1) label = "<b>"+(idx+1)+"</b> / "+n;
+        else { var a = idx%2 ? idx : idx-1; label = "<b>"+(a+1)+"–"+Math.min(a+2,n)+"</b> / "+n; }
+        $("count").innerHTML = label;
+        slider.value = idx;
+        // center the closed book (front cover / back cover) like a real book on a table
+        var shift = portrait ? 0 : (idx===0 ? -25 : (idx===n-1 && n%2===0 ? 25 : 0));
+        book.style.transform = shift ? "translateX("+shift+"%)" : "";
+        $("prev").disabled = idx===0;
+        $("next").disabled = idx>=n-1 || (!portrait && idx>=n-2 && n%2===0 && idx!==0);
+        // prioritize rendering pages near the reader
+        [idx-1,idx,idx+1,idx+2,idx+3].forEach(function(j){ if(j>=0&&j<n) render(j+1); });
+      }
+      flip.on("flip", function(){ ui(); });
+      flip.on("changeState", function(e){
+        if(e.data==="flipping"){ flipSound(); if(flip.getOrientation()!=="portrait") book.style.transform=""; }
+        if(e.data==="read") ui();
+      });
+      flip.on("changeOrientation", function(){ ui(); });
+      ui();
+
+      $("prev").onclick = function(){ flip.flipPrev(); };
+      $("next").onclick = function(){ flip.flipNext(); };
+      $("first").onclick = function(){ flip.flip(0); };
+      $("last").onclick = function(){ flip.flip(n-1); };
+      slider.oninput = function(){ flip.turnToPage(+slider.value); ui(); };
+      document.addEventListener("keydown", function(e){
+        if(e.key==="ArrowLeft") flip.flipPrev();
+        if(e.key==="ArrowRight") flip.flipNext();
+        if(e.key==="Escape" && zoomed) toggleZoom();
+      });
+
+      var zoomed = false;
+      function toggleZoom(){
+        zoomed = !zoomed;
+        $("bookWrap").style.transform = zoomed ? "scale(1.6)" : "";
+        $("stage").style.overflow = zoomed ? "auto" : "";
+      }
+      $("zoom").onclick = toggleZoom;
+
+      $("fs").onclick = function(){
+        var a = $("app");
+        if(document.fullscreenElement) document.exitFullscreen();
+        else if(a.requestFullscreen) a.requestFullscreen();
+        else if(a.webkitRequestFullscreen) a.webkitRequestFullscreen();
+      };
+      if(!(document.fullscreenEnabled||document.webkitFullscreenEnabled)) $("fs").style.display="none";
+
+      $("loader").classList.add("hide");
+      renderRest();
+    }
+
+    // Keep the whole book visible inside the stage
+    function fit(){
+      var s = $("stage"), cs = getComputedStyle(s);
+      var W = s.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - (innerWidth>640?120:0);
+      var H = s.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+      var spread = W > 640 && (W/H) > (pw/ph)*1.25;
+      var bw = spread ? Math.min(W, H*(pw*2)/ph) : Math.min(W, H*pw/ph);
+      book.style.width = Math.floor(bw)+"px";
+      if(flip) flip.update && flip.update();
+    }
+  }
+})();
+</script>
+</body>
+</html>
