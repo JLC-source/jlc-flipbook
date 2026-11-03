@@ -4,6 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>JLC Activity Report</title>
+<!-- link previews (WhatsApp, iMessage, Facebook, etc.); image URLs must be absolute -->
+<meta name="description" content="A year of community at the Jewish Latin Center. Flip through our 2026 – 5786/7 Activity Report.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Jewish Latin Center">
+<meta property="og:title" content="JLC Activity Report 2026 – 5786/7">
+<meta property="og:description" content="A year of community at the Jewish Latin Center. Flip through our 2026 – 5786/7 Activity Report.">
+<meta property="og:url" content="https://jlc-source.github.io/jlc-flipbook/flipbook.html">
+<meta property="og:image" content="https://jlc-source.github.io/jlc-flipbook/preview.jpg">
+<meta property="og:image:type" content="image/jpeg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Cover of the Jewish Latin Center 2026 – 5786/7 Activity Report">
+<meta name="twitter:card" content="summary_large_image">
 <!--
   JLC Flipbook — self-hosted PDF page-flip viewer. No ads, no accounts.
   Open-source libraries only: PDF.js (Mozilla) + StPageFlip.
@@ -119,6 +132,7 @@
   var MOBILE_PDF_URL = "jlc-activity-report-mobile.pdf"; // used when one page shows at a time ("" = always PDF_URL)
   var PAGE_RATIO = 1;                  // page width / height, to choose the PDF before it loads
   var FLIP_SOUND = true;               // soft paper sound on page turn
+  var STATS_URL = "";                  // GoatCounter endpoint, e.g. "https://jlc.goatcounter.com/count" ("" = no stats)
   /* ====================== */
 
   var $ = function(id){return document.getElementById(id)};
@@ -150,6 +164,28 @@
   }
   var bar = $("prog").firstElementChild;
   $("dl").href = url;
+
+  // Visitor stats (GoatCounter: no cookies, no personal data). Each event counts once per visit.
+  var reloaded = q.has("page"), sent = {};
+  function track(path, title){
+    if(!STATS_URL || sent[path]) return;
+    sent[path] = 1;
+    (function send(tries){
+      var gc = window.goatcounter;
+      if(gc && gc.count) gc.count({path: path, title: title, event: true});
+      else if(tries < 40) setTimeout(function(){ send(tries+1); }, 250);
+    })(0);
+  }
+  if(STATS_URL){
+    // allow_frame: count inside the website's iframe; skip the page view when we reload to switch PDFs
+    window.goatcounter = {allow_frame: true, no_onload: reloaded};
+    var gs = document.createElement("script");
+    gs.async = true; gs.src = "https://gc.zgo.at/count.js";
+    gs.setAttribute("data-goatcounter", STATS_URL);
+    document.head.appendChild(gs);
+    if(!reloaded) track(single ? "opened-on-phone" : "opened-on-computer",
+                        single ? "Opened on a phone" : "Opened on a computer");
+  }
 
   pdfjsLib.GlobalWorkerOptions.workerSrc =
     "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
@@ -278,6 +314,11 @@
         if(portrait || idx===0 || idx===n-1) label = "<b>"+(idx+1)+"</b> / "+n;
         else { var a = idx%2 ? idx : idx-1; label = "<b>"+(a+1)+"–"+Math.min(a+2,n)+"</b> / "+n; }
         $("count").innerHTML = label;
+        // how far this visitor has read
+        var far = (portrait || idx===0) ? idx+1 : Math.min((idx%2 ? idx : idx-1)+2, n);
+        if(idx > 0) track("turned-past-cover", "Turned past the cover");
+        [25,50,75].forEach(function(p){ if(far/n*100 >= p) track("read-"+p, "Read "+p+"%"); });
+        if(far >= n) track("read-to-end", "Reached the last page");
         slider.value = idx;
         // center the closed book (front cover / back cover) like a real book on a table
         var shift = portrait ? 0 : (idx===0 ? -25 : (idx===n-1 && n%2===0 ? 25 : 0));
@@ -314,9 +355,11 @@
         $("bookWrap").style.transform = zoomed ? "scale("+ZOOMS[zi]+")" : "";
         $("stage").style.overflow = zoomed ? "auto" : "";
       }
-      $("zoom").onclick = toggleZoom;
+      $("zoom").onclick = function(){ track("zoomed", "Used zoom"); toggleZoom(); };
+      $("dl").addEventListener("click", function(){ track("downloaded-pdf", "Downloaded the PDF"); });
 
       $("fs").onclick = function(){
+        track("fullscreen", "Used fullscreen");
         var a = $("app");
         if(document.fullscreenElement) document.exitFullscreen();
         else if(a.requestFullscreen) a.requestFullscreen();
