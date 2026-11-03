@@ -26,10 +26,20 @@
     font:14px/1.4 "Helvetica Neue",Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
   #app{position:relative;height:100%;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
   #stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:10px 8px 4px;position:relative}
-  #bookWrap{width:100%;height:100%;display:flex;align-items:center;justify-content:center;transition:transform .35s ease}
-  #book{margin:0 auto;transition:transform .6s cubic-bezier(.2,.7,.2,1)}
+  #bookWrap{width:100%;height:100%;display:flex;align-items:center;justify-content:center;
+    transition:transform .45s cubic-bezier(.33,0,.2,1),opacity .7s ease;opacity:0}
+  #bookWrap.ready{opacity:1}
+  #book{margin:0 auto;transition:transform 1.05s cubic-bezier(.45,0,.25,1)}
   .page{background:#fff;overflow:hidden}
-  .page img{width:100%;height:100%;display:block;object-fit:contain;user-select:none;-webkit-user-drag:none}
+  .page img{width:100%;height:100%;display:block;object-fit:contain;user-select:none;-webkit-user-drag:none;
+    animation:fadein .35s ease}
+  @keyframes fadein{from{opacity:0}}
+  /* soft crease where the two pages meet in a spread */
+  .page::after{content:"";position:absolute;top:0;bottom:0;width:9%;pointer-events:none;opacity:0;transition:opacity .3s}
+  .--landscape .page.--left::after{right:0;opacity:1;
+    background:linear-gradient(to left,rgba(40,30,15,.16),rgba(40,30,15,.05) 35%,transparent)}
+  .--landscape .page.--right::after{left:0;opacity:1;
+    background:linear-gradient(to right,rgba(40,30,15,.14),rgba(40,30,15,.04) 35%,transparent)}
   .page .ph{width:100%;height:100%;display:flex;align-items:center;justify-content:center;
     background:linear-gradient(90deg,#faf8f4 0%,#f1ece4 50%,#faf8f4 100%);background-size:200% 100%;
     animation:sh 1.4s linear infinite;color:var(--muted);font-size:12px;letter-spacing:.08em}
@@ -152,19 +162,38 @@
     el.textContent = "Couldn't load the PDF. Check that the file exists and is hosted on the same site (or on a host that allows cross-origin access).";
   }
 
-  // Soft page-turn sound generated in the browser (no audio file needed)
+  // Soft paper swish generated in the browser (no audio file needed)
   var actx;
   function flipSound(){
     if(!FLIP_SOUND) return;
     try{
       actx = actx || new (window.AudioContext||window.webkitAudioContext)();
-      var len = actx.sampleRate*0.28, buf = actx.createBuffer(1,len,actx.sampleRate), d = buf.getChannelData(0);
-      for(var i=0;i<len;i++){var t=i/len; d[i]=(Math.random()*2-1)*Math.pow(1-t,2.2)*Math.sin(Math.PI*Math.min(1,t*6));}
+      var len = actx.sampleRate*0.55, buf = actx.createBuffer(1,len,actx.sampleRate), d = buf.getChannelData(0);
+      // gentle swell then fade, like paper sliding past paper
+      for(var i=0;i<len;i++){var t=i/len; d[i]=(Math.random()*2-1)*Math.pow(Math.sin(Math.PI*Math.pow(t,.7)),2)*(1-t*.5);}
       var src = actx.createBufferSource(); src.buffer = buf;
-      var f = actx.createBiquadFilter(); f.type="bandpass"; f.frequency.value=2200; f.Q.value=.6;
-      var g = actx.createGain(); g.gain.value=.18;
-      src.connect(f); f.connect(g); g.connect(actx.destination); src.start();
+      var hp = actx.createBiquadFilter(); hp.type="highpass"; hp.frequency.value=700;
+      var lp = actx.createBiquadFilter(); lp.type="lowpass"; lp.frequency.value=3800;
+      var g = actx.createGain(); g.gain.value=.09;
+      src.connect(hp); hp.connect(lp); lp.connect(g); g.connect(actx.destination); src.start();
     }catch(e){}
+  }
+
+  // StPageFlip moves the page at a constant speed; replay its frames on an ease-in-out curve
+  function easeFlips(flip){
+    var r = flip.getRender(), start = r.startAnimation.bind(r);
+    var ease = function(t){ return t<.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2; };
+    r.startAnimation = function(frames, duration, done){
+      var L = frames.length;
+      // full page turns (not the small corner peel) take at least ~0.85s, even on narrow phones
+      if(L > 300) duration = Math.max(duration, 850);
+      if(L > 2){
+        var eased = [];
+        for(var k=0;k<L;k++) eased.push(frames[Math.round(ease(k/(L-1))*(L-1))]);
+        frames = eased;
+      }
+      start(frames, duration, done);
+    };
   }
 
   pdfjsLib.getDocument({url:url}).promise.then(function(pdf){
@@ -180,7 +209,6 @@
     for(var i=1;i<=n;i++){
       var d = document.createElement("div");
       d.className = "page";
-      if(i===1 || i===n) d.setAttribute("data-density","hard");
       d.innerHTML = '<div class="ph">'+i+'</div>';
       book.appendChild(d); pages.push(d);
     }
@@ -226,15 +254,16 @@
         width: Math.round(pw), height: Math.round(ph),
         size: "stretch",
         minWidth: 200, maxWidth: 1400, minHeight: 280, maxHeight: 2000,
-        maxShadowOpacity: 0.45,
+        maxShadowOpacity: 0.3,
         showCover: true,
         mobileScrollSupport: false,
         usePortrait: true,
-        flippingTime: 800,
+        flippingTime: 1000,
         drawShadow: true,
         autoSize: true
       });
       flip.loadFromHTML(pages);
+      easeFlips(flip);
       fit();
       var startPage = Math.min(n-1, Math.max(0, parseInt(q.get("page"), 10) || 0));
       if(startPage) flip.turnToPage(startPage);
@@ -296,6 +325,7 @@
       if(!(document.fullscreenEnabled||document.webkitFullscreenEnabled)) $("fs").style.display="none";
 
       $("loader").classList.add("hide");
+      $("bookWrap").classList.add("ready");
       renderRest();
     }
 
@@ -305,7 +335,8 @@
       var spread = spreadFits(pw/ph);
       var bw = spread ? Math.min(W, H*(pw*2)/ph) : Math.min(W, H*pw/ph);
       book.style.width = Math.floor(bw)+"px";
-      if(flip) flip.update && flip.update();
+      // StPageFlip shows two pages whenever the book is wider than 2×minWidth; make it follow our choice
+      if(flip){ flip.getSettings().minWidth = spread ? 1 : Math.ceil(bw); flip.update && flip.update(); }
     }
   }
 })();
