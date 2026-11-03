@@ -106,12 +106,38 @@
 (function(){
   /* ====== SETTINGS ====== */
   var PDF_URL = "jlc-activity-report.pdf";         // default PDF (overridden by ?pdf=...)
+  var MOBILE_PDF_URL = "jlc-activity-report-mobile.pdf"; // used when one page shows at a time ("" = always PDF_URL)
+  var PAGE_RATIO = 1;                  // page width / height, to choose the PDF before it loads
   var FLIP_SOUND = true;               // soft paper sound on page turn
   /* ====================== */
 
-  var q = new URLSearchParams(location.search);
-  var url = q.get("pdf") || PDF_URL;
   var $ = function(id){return document.getElementById(id)};
+  var q = new URLSearchParams(location.search);
+
+  function stageSize(){
+    var s = $("stage"), cs = getComputedStyle(s);
+    return { W: s.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight),
+             H: s.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) };
+  }
+  // two-page spreads only when they fit; otherwise one page at a time
+  function spreadFits(ratio){ var z = stageSize(); return z.W > 640 && (z.W/z.H) > ratio*1.25; }
+
+  var single = !spreadFits(PAGE_RATIO);
+  var url = q.get("pdf") || (single && MOBILE_PDF_URL) || PDF_URL;
+  var current = 0;
+
+  // switch PDFs when rotating a phone or resizing across the spread/single-page point
+  if(!q.get("pdf") && MOBILE_PDF_URL){
+    var rt;
+    window.addEventListener("resize", function(){
+      clearTimeout(rt);
+      rt = setTimeout(function(){
+        if(document.fullscreenElement || spreadFits(PAGE_RATIO) !== single) return;
+        q.set("page", current);
+        location.replace("?" + q.toString());
+      }, 400);
+    });
+  }
   var bar = $("prog").firstElementChild;
   $("dl").href = url;
 
@@ -210,12 +236,15 @@
       });
       flip.loadFromHTML(pages);
       fit();
+      var startPage = Math.min(n-1, Math.max(0, parseInt(q.get("page"), 10) || 0));
+      if(startPage) flip.turnToPage(startPage);
       window.addEventListener("resize", fit);
       document.addEventListener("fullscreenchange", function(){ setTimeout(fit, 60); });
 
       var slider = $("slider"); slider.max = n-1;
       function ui(){
         var idx = flip.getCurrentPageIndex(), label;
+        current = idx;
         var portrait = flip.getOrientation()==="portrait";
         if(portrait || idx===0 || idx===n-1) label = "<b>"+(idx+1)+"</b> / "+n;
         else { var a = idx%2 ? idx : idx-1; label = "<b>"+(a+1)+"–"+Math.min(a+2,n)+"</b> / "+n; }
@@ -272,10 +301,8 @@
 
     // Keep the whole book visible inside the stage
     function fit(){
-      var s = $("stage"), cs = getComputedStyle(s);
-      var W = s.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-      var H = s.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-      var spread = W > 640 && (W/H) > (pw/ph)*1.25;
+      var z = stageSize(), W = z.W, H = z.H;
+      var spread = spreadFits(pw/ph);
       var bw = spread ? Math.min(W, H*(pw*2)/ph) : Math.min(W, H*pw/ph);
       book.style.width = Math.floor(bw)+"px";
       if(flip) flip.update && flip.update();
